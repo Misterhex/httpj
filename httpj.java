@@ -1,6 +1,7 @@
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.URI;
+import java.net.InetAddress;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -58,7 +59,7 @@ record Header(String name, String value) {}
 record CliOptions(
         String method, URI url, List<Header> headers, String data, Path file,
         Path cert, Path key, Path caCert, boolean insecure, boolean showHeaders,
-        boolean follow, boolean raw, Duration timeout) {
+        boolean follow, boolean raw, Duration timeout, ResolveOverride resolve) {
 
     static CliOptions parse(String[] args) {
         if (args.length < 2) throw new IllegalArgumentException("Expected METHOD URL. Use --help.");
@@ -75,6 +76,7 @@ record CliOptions(
         var headers = new ArrayList<Header>();
         String data = null;
         Path file = null, cert = null, key = null, caCert = null;
+        ResolveOverride resolve = null;
         boolean insecure = false, showHeaders = false, follow = false, raw = false;
         int timeoutSeconds = 30;
 
@@ -92,6 +94,10 @@ record CliOptions(
                 case "--cert" -> cert = Path.of(value(args, ++i, option));
                 case "--key" -> key = Path.of(value(args, ++i, option));
                 case "--cacert" -> caCert = Path.of(value(args, ++i, option));
+                case "--resolve" -> {
+                    if (resolve != null) throw new IllegalArgumentException("Only one --resolve is supported");
+                    resolve = ResolveOverride.parse(value(args, ++i, option), url);
+                }
                 case "-k", "--insecure" -> insecure = true;
                 case "-i", "--include" -> showHeaders = true;
                 case "-L", "--location" -> follow = true;
@@ -108,7 +114,7 @@ record CliOptions(
         if ((cert == null) != (key == null)) throw new IllegalArgumentException("--cert and --key must be used together");
 
         return new CliOptions(method, url, List.copyOf(headers), data, file, cert, key,
-                caCert, insecure, showHeaders, follow, raw, Duration.ofSeconds(timeoutSeconds));
+                caCert, insecure, showHeaders, follow, raw, Duration.ofSeconds(timeoutSeconds), resolve);
     }
 
     private static String value(String[] args, int index, String option) {
@@ -126,6 +132,7 @@ record CliOptions(
                       --cert PATH              Client certificate chain (PEM)
                       --key PATH               Client private key (unencrypted PKCS#8 PEM)
                       --cacert PATH            Trusted server CA certificates (PEM)
+                      --resolve HOST:PORT:IP   Connect to IP for the URL hostname (IPv6: [::1])
                   -k, --insecure               Disable TLS certificate and hostname verification
                   -i, --include                Print response headers
                   -L, --location               Follow redirects
@@ -142,23 +149,107 @@ final class HttpExecutor {
     private HttpExecutor() {}
 
     static HttpResponse<byte[]> execute(CliOptions options) throws Exception {
-        var builder = HttpClient.newBuilder()
-                .connectTimeout(options.timeout())
-                .followRedirects(options.follow() ? HttpClient.Redirect.NORMAL : HttpClient.Redirect.NEVER);
-        TlsSupport.configure(builder, options);
+        // jdk.net.hosts.file is a JVM-wide override; scope it to this one-shot invocation.
+        try (var dns = ResolveOverride.install(options.resolve())) {
+            var builder = HttpClient.newBuilder()
+                    .connectTimeout(options.timeout())
+                    .followRedirects(options.follow() ? HttpClient.Redirect.NORMAL : HttpClient.Redirect.NEVER);
+            TlsSupport.configure(builder, options);
 
-        try (var client = builder.build()) {
-            var request = HttpRequest.newBuilder(options.url()).timeout(options.timeout());
-            for (var header : options.headers()) request.header(header.name(), header.value());
+            try (var client = builder.build()) {
+                var request = HttpRequest.newBuilder(options.url()).timeout(options.timeout());
+                for (var header : options.headers()) request.header(header.name(), header.value());
 
-            HttpRequest.BodyPublisher body = options.file() != null
-                    ? HttpRequest.BodyPublishers.ofFile(options.file())
-                    : options.data() != null
-                        ? HttpRequest.BodyPublishers.ofString(options.data(), StandardCharsets.UTF_8)
-                        : HttpRequest.BodyPublishers.noBody();
-            return client.send(request.method(options.method(), body).build(),
-                    HttpResponse.BodyHandlers.ofByteArray());
+                HttpRequest.BodyPublisher body = options.file() != null
+                        ? HttpRequest.BodyPublishers.ofFile(options.file())
+                        : options.data() != null
+                            ? HttpRequest.BodyPublishers.ofString(options.data(), StandardCharsets.UTF_8)
+                            : HttpRequest.BodyPublishers.noBody();
+                return client.send(request.method(options.method(), body).build(),
+                        HttpResponse.BodyHandlers.ofByteArray());
+            }
         }
+    }
+}
+
+/** One-shot hostname override. Preserves URI host for TLS verification, SNI, and Host header. */
+final class ResolveOverride implements AutoCloseable {
+    private static final String PROPERTY = "jdk.net.hosts.file";
+    private final String host, address;
+    private final Path temporaryFile;
+    private final String previous;
+
+    private ResolveOverride(String host, String address, Path temporaryFile, String previous) {
+        this.host = host;
+        this.address = address;
+        this.temporaryFile = temporaryFile;
+        this.previous = previous;
+    }
+
+    static ResolveOverride parse(String value, URI url) {
+        String[] parts = value.split(":", 3);
+        if (parts.length != 3 || parts[0].isBlank() || parts[1].isBlank() || parts[2].isBlank()) {
+            throw new IllegalArgumentException("--resolve expects HOST:PORT:IP (IPv6: HOST:PORT:[::1])");
+        }
+        if (!parts[0].equalsIgnoreCase(url.getHost())) {
+            throw new IllegalArgumentException("--resolve hostname must match the URL hostname");
+        }
+        int port;
+        try { port = Integer.parseInt(parts[1]); }
+        catch (NumberFormatException e) { throw new IllegalArgumentException("Invalid --resolve port"); }
+        int targetPort = url.getPort() >= 0 ? url.getPort()
+                : url.getScheme().equalsIgnoreCase("https") ? 443 : 80;
+        if (port < 1 || port > 65535 || port != targetPort) {
+            throw new IllegalArgumentException("--resolve port must match the URL port (" + targetPort + ")");
+        }
+        String ip = parts[2];
+        boolean brackets = ip.startsWith("[") && ip.endsWith("]");
+        if (brackets) ip = ip.substring(1, ip.length() - 1);
+        boolean ipv4 = ip.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}");
+        boolean ipv6 = brackets && ip.contains(":") && ip.matches("[0-9A-Fa-f:.]+");
+        if (!ipv4 && !ipv6) throw new IllegalArgumentException("--resolve IP must be an IPv4 literal or bracketed IPv6 literal");
+        if (ipv4) {
+            for (String octet : ip.split("\\.")) {
+                if (Integer.parseInt(octet) > 255)
+                    throw new IllegalArgumentException("Invalid --resolve IPv4 address: " + ip);
+            }
+        }
+        // Do not call InetAddress here: JDK reads jdk.net.hosts.file on first resolution.
+        return new ResolveOverride(parts[0], ip, null, null);
+    }
+
+    static ResolveOverride install(ResolveOverride config) throws IOException {
+        if (config == null) return null; // Null is allowed in try-with-resources.
+        Path temp = Files.createTempFile("httpj-hosts-", ".txt");
+        String previousProperty = System.getProperty(PROPERTY);
+        try {
+            Files.writeString(temp, config.address + " " + config.host + System.lineSeparator());
+            System.setProperty(PROPERTY, temp.toString());
+            // Validate the literal *after* selecting the hosts-file resolver.
+            InetAddress ip = InetAddress.getByName(config.address);
+            boolean ipv6 = config.address.contains(":");
+            if (ip.getAddress().length != (ipv6 ? 16 : 4)) {
+                throw new IllegalArgumentException("Invalid --resolve IP: " + config.address);
+            }
+            return new ResolveOverride(config.host, config.address, temp, previousProperty);
+        } catch (Exception e) {
+            if (config != null) {
+                if (previousProperty == null) System.clearProperty(PROPERTY);
+                else System.setProperty(PROPERTY, previousProperty);
+            }
+            Files.deleteIfExists(temp);
+            if (e instanceof java.net.UnknownHostException) {
+                throw new IllegalArgumentException("Invalid --resolve IP: " + config.address, e);
+            }
+            throw e;
+        }
+    }
+
+    @Override public void close() throws IOException {
+        if (temporaryFile == null) return;
+        if (previous == null) System.clearProperty(PROPERTY);
+        else System.setProperty(PROPERTY, previous);
+        Files.deleteIfExists(temporaryFile);
     }
 }
 
