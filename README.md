@@ -68,6 +68,12 @@ JsonPretty        Dependency-free JSON pretty-printer
 
 The Java 21 regression run passed **36/36** local tests covering HTTP methods, bodies, headers, JSON, redirects, error handling, TLS, hostname validation and client-certificate mTLS. See [TEST_REPORT.md](TEST_REPORT.md).
 
+Run the repeatable local suite (requires Python 3, OpenSSL 3 and Java 21+):
+
+~~~bash
+python3 tests/test_httpj.py
+~~~
+
 The public httpbin smoke test could not complete because outbound networking in the testing environment was unavailable; public-endpoint operation remains unverified there. Native Windows execution has not been tested in that environment.
 
 ## License
