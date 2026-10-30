@@ -23,6 +23,9 @@ java httpj.java POST https://httpbin.org/post -f payload.json
 # Client certificate and CA
 java httpj.java GET https://example.com --cert client.pem --key client-key.pem --cacert ca.pem
 
+# Resolve hostname to an IP (keeps HTTP Host and TLS hostname)
+java httpj.java GET https://api.example.com:8443/health --resolve api.example.com:8443:10.0.0.5
+
 # Skip TLS verification (insecure)
 java httpj.java GET https://localhost:8443 -k
 
@@ -30,4 +33,4 @@ java httpj.java GET https://localhost:8443 -k
 java httpj.java GET https://httpbin.org/redirect/1 -i -L --raw
 ```
 
-Run `java httpj.java --help` for all options. Private keys must be unencrypted PKCS#8 PEM.
+Run `java httpj.java --help` for all options. Private keys must be unencrypted PKCS#8 PEM. `--resolve` supports one hostname; cross-host redirects may fail.
