@@ -27,8 +27,8 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509TrustManager;
 
-/** Single-file HTTP client entry point: java http.java METHOD URL [options]. */
-class http {
+/** Single-file HTTP client entry point: java httpj.java METHOD URL [options]. */
+class httpj {
     public static void main(String[] args) {
         if (args.length == 0 || List.of("--help", "-h").contains(args[0])) {
             CliOptions.usage();
@@ -119,7 +119,7 @@ record CliOptions(
     static void usage() {
         System.out.println("""
                 HTTP CLI for Java 21+ (zero dependencies)
-                Usage: java http.java METHOD URL [options]
+                Usage: java httpj.java METHOD URL [options]
                   -H, --header 'Name: value'   Add request header (repeatable)
                   -d, --data TEXT              Request body as text
                   -f, --file PATH              Request body from local file

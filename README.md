@@ -1,81 +1,58 @@
 # httpj
 
-A lightweight, single-file Java alternative to curl, built for Windows. Zero dependencies, JSON pretty-printing, and PEM-based mTLS. **Java 21+.**
+A lightweight curl alternative for Windows in one Java source file. Java 21+, zero dependencies, JSON pretty-printing, and PEM-based mTLS.
 
-No Maven, Gradle, JBang, or installation needed; the JDK runs the source file directly.
+## Run
 
-## Quick start
+Requires JDK 21 or newer. No installation or build step:
 
-Download [http.java](http.java), then:
+```sh
+java httpj.java GET https://httpbin.org/get
+```
 
-~~~powershell
-java http.java GET https://httpbin.org/get
-java http.java POST https://httpbin.org/post -H "Content-Type: application/json" -d '{"name":"httpj"}'
-java http.java POST https://httpbin.org/post -H "Content-Type: application/json" -f request.json
-~~~
+## Examples
 
-### TLS / mutual TLS
+**GET with headers**
 
-~~~powershell
-java http.java GET https://internal.example.com/health --cacert ca.pem
-java http.java GET https://internal.example.com/health --cert client.pem --key client-key.pem --cacert ca.pem
-java http.java GET https://localhost:8443/health -k
-~~~
+```sh
+java httpj.java GET https://httpbin.org/headers -H "Accept: application/json" -H "X-Request-ID: 123"
+```
 
-**Important:** -k disables TLS certificate validation **and** hostname verification. Use it only for trusted test systems, not for production automation. The JDK HTTP client uses a process-wide implementation property for hostname verification; this is acceptable for a one-request-per-process CLI but should not be copied into a long-running application.
+**POST JSON**
 
-Client keys must be **unencrypted PKCS#8 PEM** (BEGIN PRIVATE KEY). Encrypted keys and legacy BEGIN RSA PRIVATE KEY are not supported. Convert legacy keys with OpenSSL:
+```sh
+java httpj.java POST https://httpbin.org/post -H "Content-Type: application/json" -d '{"name":"httpj"}'
+```
 
-~~~bash
-openssl pkcs8 -topk8 -nocrypt -in legacy.key -out client-key.pem
-~~~
+**POST body from a file**
 
-## CLI flags
+```sh
+java httpj.java POST https://httpbin.org/post -H "Content-Type: application/json" -f payload.json
+```
 
-| Flag | Purpose |
-| --- | --- |
-| -H, --header | Request header; repeatable |
-| -d, --data | Inline request body |
-| -f, --file | Body from local file |
-| --cert | PEM client certificate/chain |
-| --key | Unencrypted PKCS#8 PEM private key |
-| --cacert | PEM certificates for server trust |
-| -k, --insecure | Skip server TLS validation |
-| -i, --include | Show response headers |
-| -L, --location | Follow redirects |
-| --raw | Disable JSON pretty-printing |
-| --timeout SECONDS | Connect/request timeout, default 30 |
-| -h, --help | Show help |
+**Client certificate and custom CA (mTLS)**
 
-All HTTP methods are allowed. HTTP status goes to **stderr**; the response body goes to **stdout** (unless -i is used, which also adds headers to stdout). Non-JSON and binary bodies are emitted unchanged. Responses are held in memory before printing.
+```sh
+java httpj.java GET https://internal.example.com/api --cert client.pem --key client-key.pem --cacert ca.pem
+```
 
-**Exit codes:** 0 success, 1 transport/runtime failure, 2 usage error, 22 HTTP 4xx/5xx.
+**Skip server certificate and hostname verification (unsafe)**
 
-## Architecture
+```sh
+java httpj.java GET https://localhost:8443/health -k
+```
 
-Although distributed as just [http.java](http.java), the source contains small, package-private classes:
+**Show headers, follow redirects, or disable JSON formatting**
 
-~~~text
-http              CLI entry point / exit codes
-CliOptions        Argument parsing and validation
-HttpExecutor      HTTP requests and transport
-TlsSupport        PEM / SSLContext / mTLS
-ResponsePrinter   Response output and JSON detection
-JsonPretty        Dependency-free JSON pretty-printer
-~~~
+```sh
+java httpj.java GET https://httpbin.org/redirect/1 -i -L
+java httpj.java GET https://httpbin.org/json --raw
+```
 
-## Tests
+**Timeout**
 
-The Java 21 regression run passed **36/36** local tests covering HTTP methods, bodies, headers, JSON, redirects, error handling, TLS, hostname validation and client-certificate mTLS. See [TEST_REPORT.md](TEST_REPORT.md).
+```sh
+java httpj.java GET https://httpbin.org/delay/2 --timeout 5
+```
 
-Run the repeatable local suite (requires Python 3, OpenSSL 3 and Java 21+):
-
-~~~bash
-python3 tests/test_httpj.py
-~~~
-
-The public httpbin smoke test could not complete because outbound networking in the testing environment was unavailable; public-endpoint operation remains unverified there. Native Windows execution has not been tested in that environment.
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+Run `java httpj.java --help` for all options. Private keys must use unencrypted PKCS#8 PEM (`BEGIN PRIVATE KEY`). Exit codes: `0` success, `1` transport error, `2` invalid arguments, `22` HTTP 4xx/5xx.
