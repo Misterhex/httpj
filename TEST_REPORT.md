@@ -2,7 +2,7 @@
 
 **Result:** 36/36 local tests passed after the single-file refactor.
 
-**Runtime:** OpenJDK 21.0.12, Linux test container. The source compiled using javac, and direct execution via java http.java was verified.
+**Runtime:** OpenJDK 21.0.12, Linux test container. The source compiled using javac, and direct execution via java httpj.java was verified.
 
 ## Coverage
 
@@ -22,7 +22,7 @@ TLS cases used an offline-generated test CA, server certificate, client certific
 ## Public endpoint status
 
 ~~~bash
-java http.java GET https://httpbin.org/get --timeout 8
+java httpj.java GET https://httpbin.org/get --timeout 8
 ~~~
 
 **Unverified:** Exit 1, ConnectException in the test container; outbound connectivity/DNS to public sites was unavailable. This is **not** counted as a passing test or confirmed product defect.

@@ -13,7 +13,7 @@ import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / 'http.java'
+SOURCE = ROOT / 'httpj.java'
 
 class Handler(http.server.BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
@@ -111,7 +111,7 @@ class HttpjTests(unittest.TestCase):
         cls.tmp.cleanup()
 
     def call(self, *args, source=False):
-        cmd = ['java', str(SOURCE)] if source else ['java', '-cp', str(self.classes), 'http']
+        cmd = ['java', str(SOURCE)] if source else ['java', '-cp', str(self.classes), 'httpj']
         return subprocess.run([*cmd, *map(str, args)], capture_output=True, timeout=20)
 
     def assertSuccess(self, res):
