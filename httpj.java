@@ -59,7 +59,7 @@ record Header(String name, String value) {}
 record CliOptions(
         String method, URI url, List<Header> headers, String data, Path file,
         Path cert, Path key, Path caCert, boolean insecure, boolean showHeaders,
-        boolean follow, boolean raw, Duration timeout, ResolveOverride resolve) {
+        boolean follow, boolean raw, String color, Duration timeout, ResolveOverride resolve) {
 
     static CliOptions parse(String[] args) {
         if (args.length < 2) throw new IllegalArgumentException("Expected METHOD URL. Use --help.");
@@ -78,6 +78,7 @@ record CliOptions(
         Path file = null, cert = null, key = null, caCert = null;
         ResolveOverride resolve = null;
         boolean insecure = false, showHeaders = false, follow = false, raw = false;
+        String color = "auto";
         int timeoutSeconds = 30;
 
         for (int i = 2; i < args.length; i++) {
@@ -102,19 +103,27 @@ record CliOptions(
                 case "-i", "--include" -> showHeaders = true;
                 case "-L", "--location" -> follow = true;
                 case "--raw" -> raw = true;
+                case "--no-color" -> color = "never";
+                case "--color" -> color = value(args, ++i, option);
                 case "--timeout" -> {
                     try { timeoutSeconds = Integer.parseInt(value(args, ++i, option)); }
                     catch (NumberFormatException e) { throw new IllegalArgumentException("Timeout must be an integer"); }
                     if (timeoutSeconds <= 0) throw new IllegalArgumentException("Timeout must be positive");
                 }
-                default -> throw new IllegalArgumentException("Unknown option: " + option);
+                default -> {
+                    if (option.startsWith("--color=")) color = option.substring("--color=".length());
+                    else throw new IllegalArgumentException("Unknown option: " + option);
+                }
             }
         }
+        color = color.toLowerCase(Locale.ROOT);
+        if (!List.of("auto", "always", "never").contains(color))
+            throw new IllegalArgumentException("--color must be auto, always, or never");
         if (data != null && file != null) throw new IllegalArgumentException("Choose only one of -d, -f");
         if ((cert == null) != (key == null)) throw new IllegalArgumentException("--cert and --key must be used together");
 
         return new CliOptions(method, url, List.copyOf(headers), data, file, cert, key,
-                caCert, insecure, showHeaders, follow, raw, Duration.ofSeconds(timeoutSeconds), resolve);
+                caCert, insecure, showHeaders, follow, raw, color, Duration.ofSeconds(timeoutSeconds), resolve);
     }
 
     private static String value(String[] args, int index, String option) {
@@ -137,6 +146,8 @@ record CliOptions(
                   -i, --include                Print response headers
                   -L, --location               Follow redirects
                       --raw                    Disable JSON formatting
+                      --color=MODE             auto (default), always, or never
+                      --no-color               Alias for --color=never
                       --timeout SECONDS        Connect/request timeout (default: 30)
                   -h, --help                   Show this help
                 Exit codes: 0 success, 1 transport error, 2 usage error, 22 HTTP 4xx/5xx
@@ -329,10 +340,11 @@ final class ResponsePrinter {
     private ResponsePrinter() {}
 
     static void print(HttpResponse<byte[]> response, CliOptions options) throws IOException {
-        System.err.println("HTTP " + response.statusCode());
+        Ansi ansi = new Ansi(options.color());
+        System.err.println(ansi.status(response.statusCode()));
         if (options.showHeaders()) {
             response.headers().map().forEach((name, values) ->
-                    values.forEach(value -> System.out.println(name + ": " + value)));
+                    values.forEach(value -> System.out.println(ansi.key(name) + ": " + value)));
             System.out.println();
         }
 
@@ -341,7 +353,7 @@ final class ResponsePrinter {
         String text = new String(bytes, StandardCharsets.UTF_8);
         boolean json = type.contains("json") || text.stripLeading().startsWith("{") || text.stripLeading().startsWith("[");
         if (!options.raw() && json) {
-            try { System.out.println(JsonPretty.format(text)); }
+            try { System.out.println(JsonPretty.format(text, ansi)); }
             catch (IllegalArgumentException e) { System.out.write(bytes); }
         } else {
             System.out.write(bytes);
@@ -350,15 +362,44 @@ final class ResponsePrinter {
     }
 }
 
-/** Validating JSON pretty-printer without a third-party JSON library. */
+/** Small ANSI renderer; never emits colour escapes for piped output by default. */
+final class Ansi {
+    private static final String RESET = "\u001B[0m";
+    private final boolean enabled;
+
+    Ansi(String mode) {
+        enabled = switch (mode) {
+            case "always" -> true;
+            case "never" -> false;
+            default -> System.console() != null
+                    && (System.getenv("NO_COLOR") == null || System.getenv("NO_COLOR").isEmpty())
+                    && !"dumb".equalsIgnoreCase(System.getenv("TERM"));
+        };
+    }
+
+    String style(String text, int code) {
+        return enabled ? "\u001B[" + code + "m" + text + RESET : text;
+    }
+
+    String key(String text) { return style(text, 36); }
+    String string(String text) { return style(text, 32); }
+    String number(String text) { return style(text, 33); }
+    String literal(String text) { return style(text, 35); }
+    String status(int status) {
+        return style("HTTP " + status, status >= 500 ? 31 : status >= 400 ? 33 : status >= 300 ? 36 : 32);
+    }
+}
+
+/** Validating, syntax-colouring JSON formatter without third-party libraries. */
 final class JsonPretty {
     private final String s;
+    private final Ansi ansi;
     private int pos;
     private final StringBuilder out = new StringBuilder();
     private int depth;
-    private JsonPretty(String s) { this.s = s; }
-    static String format(String input) {
-        JsonPretty p = new JsonPretty(input);
+    private JsonPretty(String s, Ansi ansi) { this.s = s; this.ansi = ansi; }
+    static String format(String input, Ansi ansi) {
+        JsonPretty p = new JsonPretty(input, ansi);
         p.ws(); p.value(); p.ws();
         if (p.pos != input.length()) throw new IllegalArgumentException("Trailing JSON data");
         return p.out.toString();
@@ -370,7 +411,7 @@ final class JsonPretty {
     void value() {
         ws(); char c = peek();
         if (c == '{' || c == '[') { collection(c); return; }
-        if (c == '"') { string(); return; }
+        if (c == '"') { string(false); return; }
         if (c == 't') { literal("true"); return; }
         if (c == 'f') { literal("false"); return; }
         if (c == 'n') { literal("null"); return; }
@@ -383,14 +424,14 @@ final class JsonPretty {
         out.append('\n'); depth++;
         while (true) {
             indent();
-            if (object) { ws(); string(); ws(); expect(':'); out.append(": "); }
+            if (object) { ws(); string(true); ws(); expect(':'); out.append(": "); }
             value(); ws();
             if (peek() == close) { pos++; break; }
             expect(','); out.append(",\n"); ws();
         }
         depth--; out.append('\n'); indent(); out.append(close);
     }
-    void string() {
+    void string(boolean key) {
         int start = pos; expect('"');
         while (true) {
             char c = peek(); pos++;
@@ -404,29 +445,31 @@ final class JsonPretty {
                     if (Character.digit(s.charAt(pos++), 16) < 0) throw new IllegalArgumentException("Invalid Unicode escape");
             }
         }
-        out.append(s, start, pos);
+        String token = s.substring(start, pos);
+        out.append(key ? ansi.key(token) : ansi.string(token));
     }
     void literal(String token) {
         if (!s.startsWith(token, pos)) throw new IllegalArgumentException("Invalid JSON literal");
-        pos += token.length(); out.append(token);
+        pos += token.length(); out.append(ansi.literal(token));
     }
     void number() {
         int start = pos;
         if (peek() == '-') pos++;
         if (peek() == '0') pos++;
         else { if (peek() < '1' || peek() > '9') throw new IllegalArgumentException("Invalid JSON number");
-            while (pos < s.length() && Character.isDigit(s.charAt(pos))) pos++; }
+            while (pos < s.length() && asciiDigit(s.charAt(pos))) pos++; }
         if (pos < s.length() && s.charAt(pos) == '.') {
             pos++; int before = pos;
-            while (pos < s.length() && Character.isDigit(s.charAt(pos))) pos++;
+            while (pos < s.length() && asciiDigit(s.charAt(pos))) pos++;
             if (before == pos) throw new IllegalArgumentException("Invalid decimal");
         }
         if (pos < s.length() && (s.charAt(pos) == 'e' || s.charAt(pos) == 'E')) {
             pos++; if (pos < s.length() && (s.charAt(pos) == '+' || s.charAt(pos) == '-')) pos++;
             int before = pos;
-            while (pos < s.length() && Character.isDigit(s.charAt(pos))) pos++;
+            while (pos < s.length() && asciiDigit(s.charAt(pos))) pos++;
             if (before == pos) throw new IllegalArgumentException("Invalid exponent");
         }
-        out.append(s, start, pos);
+        out.append(ansi.number(s.substring(start, pos)));
     }
+    private static boolean asciiDigit(char c) { return c >= '0' && c <= '9'; }
 }
