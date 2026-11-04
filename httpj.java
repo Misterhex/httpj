@@ -1,56 +1,27 @@
-import java.io.ByteArrayInputStream;
-import java.io.IOException;
-import java.net.URI;
-import java.net.InetAddress;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.security.KeyFactory;
-import java.security.KeyStore;
-import java.security.PrivateKey;
-import java.security.SecureRandom;
-import java.security.cert.CertificateFactory;
+import module java.net.http;
 import java.security.cert.X509Certificate;
-import java.security.spec.InvalidKeySpecException;
-import java.security.spec.PKCS8EncodedKeySpec;
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.List;
-import java.util.Locale;
-import javax.net.ssl.KeyManager;
-import javax.net.ssl.KeyManagerFactory;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
 
 /** Single-file HTTP client entry point: java httpj.java METHOD URL [options]. */
-class httpj {
-    public static void main(String[] args) {
-        if (args.length == 0 || List.of("--help", "-h").contains(args[0])) {
-            CliOptions.usage();
-            return;
-        }
-
-        int exitCode;
-        try {
-            var options = CliOptions.parse(args);
-            var response = HttpExecutor.execute(options);
-            ResponsePrinter.print(response, options);
-            exitCode = response.statusCode() >= 400 ? 22 : 0;
-        } catch (IllegalArgumentException e) {
-            System.err.println("Error: " + e.getMessage());
-            exitCode = 2;
-        } catch (Exception e) {
-            System.err.println("Request failed (" + e.getClass().getSimpleName() + "): " + e);
-            exitCode = 1;
-        }
-        if (exitCode != 0) System.exit(exitCode);
+void main(String[] args) {
+    if (args.length == 0 || List.of("--help", "-h").contains(args[0])) {
+        CliOptions.usage();
+        return;
     }
+
+    int exitCode;
+    try {
+        var options = CliOptions.parse(args);
+        var response = HttpExecutor.execute(options);
+        ResponsePrinter.print(response, options);
+        exitCode = response.statusCode() >= 400 ? 22 : 0;
+    } catch (IllegalArgumentException e) {
+        System.err.println("Error: " + e.getMessage());
+        exitCode = 2;
+    } catch (Exception e) {
+        System.err.println("Request failed (" + e.getClass().getSimpleName() + "): " + e);
+        exitCode = 1;
+    }
+    if (exitCode != 0) System.exit(exitCode);
 }
 
 record Header(String name, String value) {}
@@ -124,7 +95,7 @@ record CliOptions(
 
     static void usage() {
         System.out.println("""
-                HTTP CLI for Java 21+ (zero dependencies)
+                HTTP CLI for Java 25+ (zero dependencies)
                 Usage: java httpj.java METHOD URL [options]
                   -H, --header 'Name: value'   Add request header (repeatable)
                   -d, --data TEXT              Request body as text
@@ -145,7 +116,7 @@ record CliOptions(
 }
 
 /** Request construction and HTTP transport only. */
-final class HttpExecutor {
+static final class HttpExecutor {
     private HttpExecutor() {}
 
     static HttpResponse<byte[]> execute(CliOptions options) throws Exception {
@@ -173,7 +144,7 @@ final class HttpExecutor {
 }
 
 /** One-shot hostname override. Preserves URI host for TLS verification, SNI, and Host header. */
-final class ResolveOverride implements AutoCloseable {
+static final class ResolveOverride implements AutoCloseable {
     private static final String PROPERTY = "jdk.net.hosts.file";
     private final String host, address;
     private final Path temporaryFile;
@@ -254,7 +225,7 @@ final class ResolveOverride implements AutoCloseable {
 }
 
 /** Loads PEM identity/CA certificates and configures TLS. */
-final class TlsSupport {
+static final class TlsSupport {
     private TlsSupport() {}
 
     static void configure(HttpClient.Builder builder, CliOptions options) throws Exception {
@@ -325,7 +296,7 @@ final class TlsSupport {
 }
 
 /** Response status, headers, pretty JSON, and binary-safe output. */
-final class ResponsePrinter {
+static final class ResponsePrinter {
     private ResponsePrinter() {}
 
     static void print(HttpResponse<byte[]> response, CliOptions options) throws IOException {
@@ -351,7 +322,7 @@ final class ResponsePrinter {
 }
 
 /** Validating JSON pretty-printer without a third-party JSON library. */
-final class JsonPretty {
+static final class JsonPretty {
     private final String s;
     private int pos;
     private final StringBuilder out = new StringBuilder();

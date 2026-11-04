@@ -1,12 +1,14 @@
 # httpj
 
-A single-file curl alternative for Windows. Java 21+, zero dependencies, JSON pretty-printing, and PEM-based mTLS.
+A single-file curl alternative for Windows. Java 25+, zero dependencies, JSON pretty-printing, and PEM-based mTLS.
 
-Run with JDK 21+ (no build required):
+Run with JDK 25+ (no build required):
 
 ```sh
 java httpj.java GET https://httpbin.org/get
 ```
+
+This uses Java 25 compact source files: the entry point is `void main(String[] args)` without an explicit outer class. Java automatically imports `java.base`; `import module java.net.http;` supplies the HTTP API. No preview flags are required.
 
 ## Examples
 
